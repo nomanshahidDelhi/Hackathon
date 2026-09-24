@@ -29,7 +29,7 @@ def test_every_sql_file_substitutes_cleanly(path):
 def test_full_plan_order():
     keys = [s.key for s in lw.plan_steps()]
     assert keys[:7] == ["01", "02", "03", "04", "05", "06", "07"]
-    assert keys[7:] == ["ops:01_agent_ops_schema", "ops:02_seed_sla_policy", "ops:03_views"]
+    assert keys[7:] == ["ops:01_agent_ops_schema", "ops:02_seed_sla_policy", "ops:03_views", "ops:04_agent_incidents"]
 
 
 def test_seed_only_skips_ddl():
@@ -40,7 +40,7 @@ def test_seed_only_skips_ddl():
 def test_only_filter_excludes_agent_ops_unless_requested():
     assert [s.key for s in lw.plan_steps(only={"04"})] == ["04"]
     assert [s.key for s in lw.plan_steps(only={"07", "ops"})][0] == "07"
-    assert len(lw.plan_steps(only={"ops"})) == 3
+    assert len(lw.plan_steps(only={"ops"})) == 4
 
 
 def _v1_rows(**overrides):

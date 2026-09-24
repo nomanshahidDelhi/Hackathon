@@ -61,6 +61,33 @@ python loader/load_warehouse.py --list          # show plan, run nothing
 Timestamps in the kit are generated relative to seed time, so everything downstream queries
 windows relative to `CURRENT_TIMESTAMP()`.
 
+## Phase 1 — alert storm → one incident (M1)
+
+```bash
+pip install -r agent/requirements.txt
+python loader/load_warehouse.py --only ops      # adds sre_agent_ops.agent_incidents
+python -m agent.app.triage                      # analyse only, writes nothing
+python -m agent.app.triage --persist            # open/update the incident in BigQuery
+```
+
+How it decides (`agent/app/tools/clustering.py`, `topology.py`), all at runtime from BigQuery:
+
+1. **Noise filter**: each (node, alert_type) signature's count in the window is compared with its
+   own 7-day baseline (Poisson tail). Routine chatter drops out whatever its severity.
+2. **Burst vs trend**: a signature whose values climb steadily for 15+ minutes (R² ≥ 0.7) is a
+   *precursor* handed to forecasting, not part of the storm.
+3. **Clustering**: bursts that overlap in time and share a region or service become one incident.
+4. **Root cause**: candidates ranked on earliest onset, how many involved nodes depend on them in
+   the inferred topology (tiers, name tokens, `-replica`→`-primary`, "upstream …" message evidence),
+   tier depth, saturation evidence, and a penalty when a node's own messages blame something upstream.
+
+The window widens automatically (60 min → 24 h) until an incident is found, because seed data is
+relative to load time. Incidents are written with DML in one transaction to `incidents` and
+`correlated_alerts`, plus `sre_agent_ops.agent_incidents` so reruns update rather than duplicate.
+
+Tests (`pytest tests`) include a simulator of the kit's telemetry generator (`tests/fixtures/`,
+never imported by the agent).
+
 ## Assumptions
 
 - **SLA credit rates** are not in the kit (only the formula
