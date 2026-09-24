@@ -157,6 +157,49 @@ CHAOS_DISABLE=gemini python -m agent.app.remediate propose                      
 - **Retry/backoff** on BigQuery and Gemini calls; every retrieval tier and the drafter degrade instead
   of crashing.
 
+## Phase 4 — impact, postmortem, agent graph, console (M4)
+
+```bash
+python loader/load_warehouse.py --only ops      # adds v_incident_impact
+
+# CLI
+python -m agent.app.incident impact inc-5019               # revenue at risk + SLA credits
+python -m agent.app.incident resolve inc-5019 --by "Your Name"
+python -m agent.app.incident postmortem inc-5019 --publish # writes incident_postmortems
+python -m agent.app.incident metrics
+
+# Console + agent locally (two terminals)
+uvicorn agent.app.server:app --port 8080
+cd console && npm ci && npm run dev             # http://localhost:5173
+
+# Cloud Run (Cloud Shell)
+terraform -chdir=infra/terraform apply          # picks up the ingest publisher role
+./deploy/deploy.sh                              # add `ingest` to also run the consumer
+gcloud run services proxy sre-console --region "$GCP_REGION" --port 8080
+```
+
+- **Impact** (`sql/agent_ops/07_incident_impact.sql`, `tools/impact.py`): affected services × regions
+  from the incident's correlated alerts → `customer_accounts` → revenue at risk (MRR of affected
+  accounts) and SLA credits (`mrr_cad × credit_rate × downtime / minutes_in_month`), SLA breach per
+  tier against its restoration target. All arithmetic is in the warehouse.
+- **Postmortem** (`tools/postmortem.py`): downtime, impact summary, id and FK check are computed;
+  Gemini writes root cause, contributing factors and owned action items from gathered facts, and its
+  root cause is rejected unless it names the causal failure before any symptom. Drafts have
+  `published_at` NULL; publishing requires the incident to be RESOLVED. Corrections are new rows.
+- **Agent graph** (`agents.py`, ADK + Gemini Flash): `sre_commander` routes to `incident_response`
+  (triage → diagnosis → remediation → parallel forecast + impact) or `postmortem_agent`. Every agent
+  has retry with exponential backoff. Agents have **no** approve/execute/resolve/publish tools.
+- **Backend** (`server.py`): AG-UI stream at `/agent`, REST at `/api/*` (docs at `/api/docs`),
+  responses redacted; human actions need the IAP identity or a named user.
+- **Console** (`console/`): KPIs, incident list, "N alerts → 1 incident", root-cause ranking,
+  alert-storm timeline, inferred topology graph, fix/rollback with guardrails and one-click approval,
+  impact and SLA credits, breach forecast chart, postmortem draft/publish, and the streaming agent.
+- **Deploy** (`Dockerfile`, `deploy/deploy.sh`): one image; `sre-console` runs as the `sre-agent`
+  service account without public access; the same image runs the ingest consumer.
+
+Offline preview of the console against simulated kit data (no GCP needed):
+`cd console && npm run build && cd .. && python -m tests.fixtures.preview_server`.
+
 ## Assumptions
 
 - **SLA credit rates** are not in the kit (only the formula

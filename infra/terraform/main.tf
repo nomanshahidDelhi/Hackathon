@@ -73,6 +73,7 @@ locals {
         "roles/bigquery.dataEditor",
         "roles/bigquery.jobUser",
         "roles/pubsub.subscriber",
+        "roles/pubsub.publisher", # forwards malformed messages to the dead-letter topic
       ]
     }
   }
