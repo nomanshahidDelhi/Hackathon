@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import sys
 
+from .logging_setup import setup_logging
 from .config import load_settings
 from .llm import Gemini
 from .models import Incident
@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         d.add_argument("--by", required=True)
         d.add_argument("--reason", default="")
     args = ap.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    setup_logging()
 
     wh = Warehouse(load_settings())
     try:

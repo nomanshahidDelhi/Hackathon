@@ -23,6 +23,11 @@ class LLMUnavailable(RuntimeError):
     pass
 
 
+def chaos(name: str) -> bool:
+    """Deliberate fault injection for resilience demos: CHAOS_DISABLE=gemini,embeddings,vector_search"""
+    return name in {s.strip() for s in os.environ.get("CHAOS_DISABLE", "").split(",")}
+
+
 class Gemini:
     def __init__(self, project: str, location: str | None = None, model: str | None = None):
         self.project = project
@@ -59,6 +64,8 @@ class Gemini:
         raise LLMUnavailable(f"{what} failed after {attempts} attempts: {last}") from last
 
     def generate_json(self, prompt: str, schema: dict[str, Any], temperature: float = 0.2) -> dict[str, Any]:
+        if chaos("gemini"):
+            raise LLMUnavailable("gemini disabled by CHAOS_DISABLE")
         client, _ = self._clients()
         from google.genai import types
 
@@ -77,6 +84,8 @@ class Gemini:
         return self._retry(call, f"gemini {self.model}")
 
     def embed_query(self, text: str) -> list[float]:
+        if chaos("embeddings"):
+            raise LLMUnavailable("embeddings disabled by CHAOS_DISABLE")
         _, client = self._clients()
         from google.genai import types
 

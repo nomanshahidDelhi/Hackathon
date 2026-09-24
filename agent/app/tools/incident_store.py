@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
+from ..redact import redact_obj
 from ..models import SEVERITY_RANK, TIER_RANK, Incident
 from .bq import Warehouse
 
@@ -33,7 +34,7 @@ def title(incident: Incident) -> str:
 def summary_json(incident: Incident) -> str:
     d = asdict(incident)
     d.pop("alert_ids")  # stored in correlated_alerts
-    return json.dumps(d, default=str)
+    return json.dumps(redact_obj(json.loads(json.dumps(d, default=str))))
 
 
 class IncidentStore:

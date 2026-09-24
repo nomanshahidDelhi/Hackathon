@@ -126,7 +126,9 @@ class TriageResult:
     precursors: list[SignatureStats] = field(default_factory=list)  # slow trends -> forecasting (M3)
 
     def to_dict(self) -> dict[str, Any]:
-        return _jsonable(asdict(self))
+        from .redact import redact_obj
+
+        return redact_obj(_jsonable(asdict(self)))
 
 
 def _ts(v: Any) -> datetime:

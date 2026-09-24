@@ -33,6 +33,16 @@ def with_retry(fn: Callable[[], T], attempts: int = 4, base_delay: float = 1.0) 
     raise AssertionError("unreachable")
 
 
+# Load-test traffic is real ingest but synthetic content: keep it out of triage
+# and forecasting unless INCLUDE_SYNTHETIC=1.
+SYNTHETIC_SOURCES = ["loadgen"]
+
+
+def excluded_sources() -> list[str]:
+    import os
+    return [] if os.environ.get("INCLUDE_SYNTHETIC") == "1" else SYNTHETIC_SOURCES
+
+
 class Warehouse:
     def __init__(self, settings: Settings):
         from google.cloud import bigquery
@@ -71,8 +81,9 @@ class Warehouse:
             SELECT alert_id, node_id, service_name, severity, alert_type, message,
                    measured_value, timestamp
             FROM {self.s.table('sre_agent_ops.v_alerts')}
-            WHERE timestamp BETWEEN @start AND @end""",
-            [self.param("start", start), self.param("end", end)])
+            WHERE timestamp BETWEEN @start AND @end
+              AND source NOT IN UNNEST(@excluded)""",
+            [self.param("start", start), self.param("end", end), self.param("excluded", excluded_sources())])
         return [Alert(**r) for r in rows]
 
     def fetch_baseline(self, before: datetime, days: int) -> dict[tuple[str, str], int]:
@@ -82,8 +93,9 @@ class Warehouse:
             FROM {self.s.table('sre_agent_ops.v_alerts')}
             WHERE timestamp >= TIMESTAMP_SUB(@before, INTERVAL @days DAY)
               AND timestamp < @before
+              AND source NOT IN UNNEST(@excluded)
             GROUP BY node_id, alert_type""",
-            [self.param("before", before), self.param("days", days)])
+            [self.param("before", before), self.param("days", days), self.param("excluded", excluded_sources())])
         return {(r["node_id"], r["alert_type"]): r["n"] for r in rows}
 
     # -- runbooks (M2) -----------------------------------------------------------
@@ -123,6 +135,36 @@ class Warehouse:
             FROM {self.s.table('sre_incident_mart.remediation_logs')}
             GROUP BY runbook_id""")
         return {r["runbook_id"]: (r["ok"], r["total"]) for r in rows}
+
+    # -- forecasting (M3) ------------------------------------------------------
+    def metric_thresholds(self) -> dict[str, float]:
+        rows = self.query(f"SELECT pattern, threshold FROM {self.s.table('sre_agent_ops.metric_thresholds')}")
+        return {r["pattern"].lower(): r["threshold"] for r in rows}
+
+    def past_incidents(self) -> list[dict[str, Any]]:
+        """Incidents with how they were remediated (runbook, outcome)."""
+        return self.query(f"""
+            SELECT i.incident_id, i.title, i.status, i.severity, i.affected_region,
+                   i.started_at, i.resolved_at,
+                   ARRAY_AGG(STRUCT(r.runbook_id, r.status) IGNORE NULLS ORDER BY r.started_at) AS remediations
+            FROM {self.s.table('sre_incident_mart.incidents')} i
+            LEFT JOIN {self.s.table('sre_incident_mart.remediation_logs')} r USING (incident_id)
+            GROUP BY 1, 2, 3, 4, 5, 6, 7""")
+
+    def insert_forecasts(self, rows: list[dict[str, Any]]) -> None:
+        import json
+
+        self.query(f"""
+            INSERT {self.s.table('sre_agent_ops.forecasts')}
+              (forecast_id, node_id, service_name, alert_type, samples, current_value, threshold,
+               slope_per_min, r_squared, eta_minutes, predicted_breach_at, generated_at, explanation)
+            SELECT JSON_VALUE(r, '$.forecast_id'), JSON_VALUE(r, '$.node_id'), JSON_VALUE(r, '$.service_name'),
+                   JSON_VALUE(r, '$.alert_type'), CAST(JSON_VALUE(r, '$.samples') AS INT64),
+                   CAST(JSON_VALUE(r, '$.current_value') AS FLOAT64), CAST(JSON_VALUE(r, '$.threshold') AS FLOAT64),
+                   CAST(JSON_VALUE(r, '$.slope_per_min') AS FLOAT64), CAST(JSON_VALUE(r, '$.r_squared') AS FLOAT64),
+                   CAST(JSON_VALUE(r, '$.eta_minutes') AS FLOAT64), TIMESTAMP(JSON_VALUE(r, '$.predicted_breach_at')),
+                   CURRENT_TIMESTAMP(), JSON_VALUE(r, '$.explanation')
+            FROM UNNEST(JSON_QUERY_ARRAY(@rows)) AS r""", [self.param("rows", json.dumps(rows, default=str))])
 
     def highest_tier(self, services: list[str], regions: list[str]) -> str | None:
         rows = self.query(f"""

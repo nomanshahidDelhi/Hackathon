@@ -119,6 +119,44 @@ python -m agent.app.remediate execute apr-XXXX                          # writes
   `hitl_approved` in `remediation_logs` comes from that row. Execution target is the sandbox (there is
   no real production estate); on failure the rollback runs and the row is ROLLED_BACK.
 
+## Phase 3 — resilience, forecasting, redaction (M3)
+
+```bash
+pip install -r agent/requirements.txt -r ingest/requirements.txt
+python loader/load_warehouse.py --only ops      # thresholds table + deduplicating v_alerts view
+
+# Forecast breaches (best right after a --seed-only reload; data is relative to seed time)
+python -m agent.app.predict                     # WARN / WATCH / STALE / BREACHED per node, with the why
+python -m agent.app.predict --persist           # also write sre_agent_ops.forecasts
+
+# 1,000+ alerts/min with nothing dropped (two terminals)
+python -m ingest.consumer
+python -m ingest.loadgen --rate 1500 --minutes 5 > manifest.json
+python -m ingest.reconcile manifest.json        # PASS/FAIL: stored == sent, peak/min, DLQ, no secrets
+
+# Resilience: knock out dependencies on purpose
+CHAOS_DISABLE=vector_search,embeddings python -m agent.app.remediate propose   # keyword fallback
+CHAOS_DISABLE=gemini python -m agent.app.remediate propose                      # template drafting
+```
+
+- **Forecasting** (`tools/forecast.py`, `predict.py`): least-squares slope per (node, alert_type) with
+  ≥6 samples over ≥10 min and R² ≥ 0.8; threshold read from the alert text, else from the
+  `metric_thresholds` policy table. ETA with a ±2 SE band. STALE when the projected breach time has
+  passed with no fresh samples (either it breached silently or the collector stopped). The "why"
+  combines the numbers, the runbook retrieved for the signal, and similar past incidents; Gemini
+  words it, and the deterministic text stands if Gemini is down.
+- **Ingest** (`ingest/`): streaming pull with flow control, batches of 500 or 1 s, ack only after the
+  row is written, nack on write failure (Pub/Sub redelivers, then dead-letters), malformed → DLQ topic,
+  duplicates absorbed (in memory, insertId, and `QUALIFY` in `v_alerts`), audit row per batch.
+  Load-test rows carry `source='loadgen'` and are excluded from triage/forecasting
+  (`INCLUDE_SYNTHETIC=1` to include).
+- **Redaction** (`redact.py`): credentials (GCP/GitHub/AWS/Slack keys, OAuth/JWT/bearer, private keys,
+  SA JSON, passwords in URIs and `*PASSWORD=`), emails, phones, SINs, Luhn-valid card numbers. Applied
+  to every log line (including tracebacks), CLI/JSON output, LLM prompts and replies, stored incident
+  summaries, approval scripts, `remediation_logs`, forecasts and ingested alert messages.
+- **Retry/backoff** on BigQuery and Gemini calls; every retrieval tier and the drafter degrade instead
+  of crashing.
+
 ## Assumptions
 
 - **SLA credit rates** are not in the kit (only the formula

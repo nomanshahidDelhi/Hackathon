@@ -104,7 +104,29 @@ def retrieve(
     top_k: int = 5,
     disable: set[str] = frozenset(),
 ) -> RetrievalResult:
-    q = query_text(incident)
+    root_type = incident.root_cause.alert_type
+    symptoms = {s["alert_type"] for s in incident.signatures if s["alert_type"] != root_type}
+    return retrieve_query(query_text(incident), root_type, symptoms, source, embed, top_k, disable)
+
+
+def signal_query(alert_type: str, service: str, node_type: str, message: str) -> str:
+    """Same phrasing as query_text, for a single signal (e.g. a forecast precursor)."""
+    return redact(f"{alert_type.replace('_', ' ')} on {service} ({node_type}). "
+                  f"Failure signature: {alert_type}. {message}")
+
+
+def retrieve_query(
+    q: str,
+    root_type: str,
+    symptom_types: set[str],
+    source: RunbookSource,
+    embed: Callable[[str], list[float]] | None = None,
+    top_k: int = 5,
+    disable: set[str] = frozenset(),
+) -> RetrievalResult:
+    from ..llm import chaos
+
+    disable = set(disable) | {t for t in ("vector_search", "local_cosine") if chaos(t)}
     errors: list[str] = []
     runbooks: list[Runbook] | None = None
 
@@ -149,7 +171,7 @@ def retrieve(
             for r in load_runbooks():
                 doc = tokens(f"{r.failure_signature} {r.title}")
                 overlap = len(qt & doc) / len(doc) if doc else 0.0
-                scored.append((max(overlap, signature_match(r.failure_signature, incident.root_cause.alert_type)), r))
+                scored.append((max(overlap, signature_match(r.failure_signature, root_type)), r))
             scored.sort(key=lambda s: -s[0])
             hits = [RunbookHit(r.runbook_id, r.title, r.failure_signature, s, "keyword")
                     for s, r in scored[:top_k] if s > 0]
@@ -165,12 +187,11 @@ def retrieve(
     except Exception as exc:
         errors.append(f"history: {type(exc).__name__}")
         history = {}
-    return RetrievalResult(q, method, rerank(hits, incident, history), errors)
+    return RetrievalResult(q, method, rerank(hits, root_type, symptom_types, history), errors)
 
 
-def rerank(hits: list[RunbookHit], incident: Incident, history: dict[str, tuple[int, int]]) -> list[RunbookHit]:
-    root_type = incident.root_cause.alert_type
-    symptom_types = {s["alert_type"] for s in incident.signatures if s["alert_type"] != root_type}
+def rerank(hits: list[RunbookHit], root_type: str, symptom_types: set[str],
+           history: dict[str, tuple[int, int]]) -> list[RunbookHit]:
     for h in hits:
         ok, total = history.get(h.runbook_id, (0, 0))
         sig = signature_match(h.failure_signature, root_type)

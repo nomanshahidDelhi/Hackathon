@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import sys
 from datetime import timedelta
 
+from .logging_setup import setup_logging
 from .config import Settings, load_settings
 from .models import TriageResult
 from .tools.bq import Warehouse
@@ -79,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--persist", action="store_true", help="open/update the top incident in BigQuery")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    setup_logging()
 
     settings: Settings = load_settings()
     wh = Warehouse(settings)
