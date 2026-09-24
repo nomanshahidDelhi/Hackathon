@@ -28,7 +28,13 @@ gcloud auth application-default set-quota-project "$GCP_PROJECT_ID"
 # 1. Infrastructure (APIs, vertex_conn + Vertex AI User grant, SAs, Pub/Sub)
 cd infra/terraform
 cp terraform.tfvars.example terraform.tfvars   # set project_id / region
-terraform init && terraform apply
+terraform init
+# Lab projects often come with vertex_conn already created. If it exists, adopt it
+# instead of creating it (otherwise apply fails with 409 Already Exists):
+bq show --connection --location="$GCP_REGION" vertex_conn >/dev/null 2>&1 && \
+  terraform import google_bigquery_connection.vertex_conn \
+    "projects/$GCP_PROJECT_ID/locations/$GCP_REGION/connections/vertex_conn"
+terraform apply
 cd ../..
 
 # 2. Warehouse

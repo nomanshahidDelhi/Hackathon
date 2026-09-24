@@ -1,7 +1,3 @@
-data "google_project" "this" {
-  project_id = var.project_id
-}
-
 # ---------------------------------------------------------------------------
 # APIs
 # ---------------------------------------------------------------------------
@@ -141,20 +137,39 @@ resource "google_pubsub_subscription" "alerts_dlq_hold" {
 }
 
 # The Pub/Sub service agent must be able to forward to the DLQ and ack the source.
+# Google creates that agent lazily, so force it into existence and give IAM a
+# moment to see it before granting roles.
+resource "google_project_service_identity" "pubsub_agent" {
+  provider = google-beta
+  project  = var.project_id
+  service  = "pubsub.googleapis.com"
+
+  depends_on = [google_project_service.enabled]
+}
+
+resource "time_sleep" "pubsub_agent_propagation" {
+  create_duration = "30s"
+  depends_on      = [google_project_service_identity.pubsub_agent]
+}
+
 locals {
-  pubsub_agent = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+  pubsub_agent = "serviceAccount:${google_project_service_identity.pubsub_agent.email}"
 }
 
 resource "google_pubsub_topic_iam_member" "dlq_publisher" {
   topic  = google_pubsub_topic.alerts_dlq.id
   role   = "roles/pubsub.publisher"
   member = local.pubsub_agent
+
+  depends_on = [time_sleep.pubsub_agent_propagation]
 }
 
 resource "google_pubsub_subscription_iam_member" "source_subscriber" {
   subscription = google_pubsub_subscription.alerts_ingest.id
   role         = "roles/pubsub.subscriber"
   member       = local.pubsub_agent
+
+  depends_on = [time_sleep.pubsub_agent_propagation]
 }
 
 # ---------------------------------------------------------------------------
