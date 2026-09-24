@@ -86,6 +86,44 @@ class Warehouse:
             [self.param("before", before), self.param("days", days)])
         return {(r["node_id"], r["alert_type"]): r["n"] for r in rows}
 
+    # -- runbooks (M2) -----------------------------------------------------------
+    def vector_search(self, query: str, top_k: int = 5) -> list[tuple[str, float]]:
+        """Rank runbooks in-warehouse. Query side uses RETRIEVAL_QUERY to pair with the
+        RETRIEVAL_DOCUMENT vectors the kit stored."""
+        rows = self.query(f"""
+            SELECT base.runbook_id AS runbook_id, distance
+            FROM VECTOR_SEARCH(
+              TABLE {self.s.table('sre_knowledge_base.runbooks')}, 'embedding',
+              (SELECT embedding
+               FROM AI.GENERATE_EMBEDDING(
+                 MODEL {self.s.table('sre_knowledge_base.embedding_model')},
+                 (SELECT @q AS content),
+                 STRUCT('RETRIEVAL_QUERY' AS task_type, 768 AS output_dimensionality))),
+              'embedding', top_k => @k, distance_type => 'COSINE')
+            ORDER BY distance""", [self.param("q", query), self.param("k", top_k)])
+        if not rows:
+            raise RuntimeError("vector search returned no rows (embeddings missing?)")
+        return [(r["runbook_id"], r["distance"]) for r in rows]
+
+    def fetch_runbooks(self):
+        from .retrieval import Runbook
+
+        rows = self.query(f"""
+            SELECT runbook_id, title, failure_signature, remediation_steps,
+                   rollback_commands, remediation_script, embedding
+            FROM {self.s.table('sre_knowledge_base.runbooks')}""")
+        return [Runbook(**{**r, "embedding": list(r["embedding"] or [])}) for r in rows]
+
+    def runbook_history(self) -> dict[str, tuple[int, int]]:
+        """runbook_id -> (successful executions, all executions)."""
+        rows = self.query(f"""
+            SELECT runbook_id,
+                   COUNT(DISTINCT IF(status = 'SUCCESS', execution_id, NULL)) AS ok,
+                   COUNT(DISTINCT execution_id) AS total
+            FROM {self.s.table('sre_incident_mart.remediation_logs')}
+            GROUP BY runbook_id""")
+        return {r["runbook_id"]: (r["ok"], r["total"]) for r in rows}
+
     def highest_tier(self, services: list[str], regions: list[str]) -> str | None:
         rows = self.query(f"""
             SELECT DISTINCT tier

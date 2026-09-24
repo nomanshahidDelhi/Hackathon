@@ -87,6 +87,29 @@ class Incident:
     symptom_services: list[str]
     max_severity: str
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Incident":
+        """Rebuild from the JSON stored in sre_agent_ops.agent_incidents.triage_json."""
+        def cand(c: dict[str, Any]) -> RootCandidate:
+            return RootCandidate(**{**c, "first_at": _ts(c["first_at"])})
+
+        return cls(
+            cluster_id=d["cluster_id"],
+            alert_ids=list(d.get("alert_ids", [])),
+            alert_count=d["alert_count"],
+            started_at=_ts(d["started_at"]),
+            last_seen_at=_ts(d["last_seen_at"]),
+            regions=d["regions"],
+            services=d["services"],
+            nodes=d["nodes"],
+            signatures=d["signatures"],
+            root_cause=cand(d["root_cause"]),
+            candidates=[cand(c) for c in d["candidates"]],
+            confidence=d["confidence"],
+            symptom_services=d["symptom_services"],
+            max_severity=d["max_severity"],
+        )
+
     def fingerprint(self) -> str:
         """Stable across reruns of the same storm: root node + signature + onset minute."""
         rc = self.root_cause
@@ -104,6 +127,10 @@ class TriageResult:
 
     def to_dict(self) -> dict[str, Any]:
         return _jsonable(asdict(self))
+
+
+def _ts(v: Any) -> datetime:
+    return v if isinstance(v, datetime) else datetime.fromisoformat(str(v).replace(" ", "T"))
 
 
 def _jsonable(obj: Any) -> Any:

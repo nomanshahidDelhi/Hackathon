@@ -88,6 +88,37 @@ relative to load time. Incidents are written with DML in one transaction to `inc
 Tests (`pytest tests`) include a simulator of the kit's telemetry generator (`tests/fixtures/`,
 never imported by the agent).
 
+## Phase 2 — runbook retrieval & safe remediation (M2)
+
+```bash
+pip install -r agent/requirements.txt
+python loader/load_warehouse.py --only ops      # adds approval execution columns
+export GEMINI_MODEL=gemini-3.6-flash            # model id as named in the lab; GEMINI_LOCATION defaults to global
+
+python -m agent.app.remediate propose                                   # dry: retrieve, draft, guardrails, sandbox
+python -m agent.app.remediate propose --disable vector_search,local_cosine   # prove the keyword fallback
+python -m agent.app.remediate propose --request-approval                # opens incident if needed, PENDING approval
+python -m agent.app.remediate approve apr-XXXX --by "Your Name"
+python -m agent.app.remediate execute apr-XXXX                          # writes remediation_logs
+```
+
+- **Retrieval** (`tools/retrieval.py`): BigQuery `VECTOR_SEARCH` with the query embedded in-warehouse
+  (`RETRIEVAL_QUERY`, 768 dims) → in-process cosine over the stored vectors → keyword match on
+  `failure_signature`. The query describes the *root cause*. Re-rank on similarity, signature match,
+  runbook success history, and a penalty for runbooks that match a *symptom* alert instead.
+  Gemini gives a second opinion; a disagreement is shown to the approver, never silently applied.
+- **Drafting** (`tools/remediation.py`): Gemini adapts the retrieved runbook into an idempotent script
+  and a bash rollback. Up to 3 drafts, each fed the previous draft's guardrail and sandbox findings;
+  the runbook template is the last resort; otherwise ESCALATE.
+- **Guardrails** (`tools/guardrails.py`): code, not prompt. BLOCK = destructive/unscoped/secret/unknown
+  binary/no rollback (cannot be approved); REVIEW = mutates state (needs a human); ALLOW = read-only.
+- **Sandbox** (`executor/sandbox.py`): `bash -n`, then two runs against stateful stubs with PATH holding
+  only the allowlisted stubs and no credentials; different calls on the second run = not idempotent.
+- **Approval gate** (`tools/approvals.py`, `executor/execute.py`): executes only an APPROVED row with a
+  named approver, never executed before, whose script hash matches, and that still passes guardrails.
+  `hitl_approved` in `remediation_logs` comes from that row. Execution target is the sandbox (there is
+  no real production estate); on failure the rollback runs and the row is ROLLED_BACK.
+
 ## Assumptions
 
 - **SLA credit rates** are not in the kit (only the formula

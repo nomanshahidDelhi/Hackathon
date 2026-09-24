@@ -1,1 +1,2 @@
 google-cloud-bigquery>=3.25
+google-genai>=1.20
