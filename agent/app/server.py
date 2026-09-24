@@ -121,6 +121,11 @@ def forecasts(horizon: float = 60.0, explain: bool = False):
     return ok([asdict(f) for f in svc().forecasts(horizon=horizon, explain=explain)])
 
 
+@app.get("/api/series")
+def series(node_id: str, alert_type: str, minutes: int = 120):
+    return ok(svc().series(node_id, alert_type, minutes))
+
+
 @app.get("/api/approvals/pending")
 def pending():
     from .tools.approvals import Approvals

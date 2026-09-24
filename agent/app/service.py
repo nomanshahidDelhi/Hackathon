@@ -264,6 +264,16 @@ class SREService:
             "edges": [{"source": a, "target": b} for a, b in topo.edges()],
         }
 
+    def series(self, node_id: str, alert_type: str, minutes: int = 120) -> list[dict[str, Any]]:
+        """Raw measured values for one signal (the forecast chart's observed points)."""
+        return self.wh.query(f"""
+            SELECT timestamp AS t, measured_value AS v
+            FROM {self.t('sre_agent_ops.v_alerts')}
+            WHERE node_id = @node AND alert_type = @type AND measured_value IS NOT NULL
+              AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @m MINUTE)
+            ORDER BY timestamp""", [self.wh.param("node", node_id), self.wh.param("type", alert_type),
+                                    self.wh.param("m", minutes)])
+
     def metrics(self) -> dict[str, Any]:
         t = self.t
         mttr = self.wh.query(f"""
