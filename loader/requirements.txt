@@ -1,0 +1,2 @@
+google-cloud-bigquery>=3.25
+google-cloud-bigquery-connection>=1.15

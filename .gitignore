@@ -1,0 +1,36 @@
+# --- Secrets: never commit (grounds for disqualification) ---
+*.json.key
+*-sa.json
+*service-account*.json
+application_default_credentials.json
+credentials.json
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+
+# --- Terraform state / local config ---
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/terraform.tfvars
+infra/terraform/.terraform.lock.hcl
+*.tfplan
+
+# --- Organiser material & duplicates (confidential / not our work) ---
+*.pdf
+files_track2_track_2_data/
+
+# --- Query results / exported data (rules: do not commit) ---
+exports/
+*.csv
+*.parquet
+
+# --- Python / Node ---
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+dist/
