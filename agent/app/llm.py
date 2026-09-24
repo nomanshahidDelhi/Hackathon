@@ -66,6 +66,8 @@ class Gemini:
             temperature=temperature,
             response_mime_type="application/json",
             response_schema=schema,
+            # No tools are passed; turning AFC off also silences the SDK's per-call warnings.
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
         def call():
