@@ -1,2 +1,6 @@
 google-cloud-bigquery>=3.25
 google-genai>=1.20
+google-adk>=2.9,<3
+ag-ui-adk>=0.7,<0.8
+fastapi>=0.115
+uvicorn[standard]>=0.30
